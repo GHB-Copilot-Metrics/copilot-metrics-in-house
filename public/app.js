@@ -291,12 +291,33 @@
 
   // --- Exports ---
 
+  async function downloadFile(url, defaultFilename) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to download file.');
+      }
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = defaultFilename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch (err) {
+      showToast(err.message || 'Download failed.');
+    }
+  }
+
   exportXlsxBtn.addEventListener('click', () => {
     if (!currentSheets || Object.keys(currentSheets).length === 0) {
       showToast('No data to export. Please fetch metrics first.');
       return;
     }
-    window.location.href = '/api/export?format=xlsx';
+    downloadFile('/api/export?format=xlsx', 'copilot_metrics.xlsx');
   });
 
   exportCsvBtn.addEventListener('click', () => {
@@ -304,7 +325,7 @@
       showToast('No active tab data to export. Please fetch metrics first.');
       return;
     }
-    window.location.href = `/api/export?format=csv&sheet=${encodeURIComponent(activeSheetKey)}`;
+    downloadFile(`/api/export?format=csv&sheet=${encodeURIComponent(activeSheetKey)}`, `copilot_metrics_${activeSheetKey}.csv`);
   });
 
 })();

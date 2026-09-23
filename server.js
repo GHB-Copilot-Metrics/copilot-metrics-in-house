@@ -286,9 +286,9 @@ app.get('/api/export', (req, res) => {
       XLSX.utils.book_append_sheet(wb, ws, name);
     }
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-    res.setHeader('Content-Disposition', 'attachment; filename=copilot_metrics.xlsx');
+    res.attachment('copilot_metrics.xlsx');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    return res.send(buffer);
+    return res.end(buffer);
   }
 
   // CSV: export a single sheet
@@ -298,9 +298,9 @@ app.get('/api/export', (req, res) => {
   }
   const ws = XLSX.utils.json_to_sheet(sheetData.rows, { header: sheetData.columns });
   const csv = XLSX.utils.sheet_to_csv(ws);
-  res.setHeader('Content-Disposition', `attachment; filename=copilot_metrics_${sheetKey}.csv`);
+  res.attachment(`copilot_metrics_${sheetKey}.csv`);
   res.setHeader('Content-Type', 'text/csv');
-  res.send(csv);
+  return res.send(csv);
 });
 
 const server = app.listen(PORT, () => {
