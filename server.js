@@ -163,57 +163,62 @@ app.post('/api/metrics', async (req, res) => {
   const allSheets = [];
   const errors = [];
 
-  for (const day of dates) {
-    try {
-      // Step 1: Get download links from GitHub API
-      const apiResp = await axios.get(`${API_BASE}?day=${day}`, {
-        headers: {
-          Authorization: `token ${GITHUB_PAT}`,
-          Accept: 'application/json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-        timeout: 30000,
-      });
-
-      const { download_links, report_day } = apiResp.data;
-      const reportDay = report_day || day;
-
-      if (!download_links || download_links.length === 0) {
-        errors.push({ day, status: 'NO_LINKS', message: 'No download links returned.' });
-        continue;
-      }
-
-      // Step 2: Fetch each download link and parse the JSON/NDJSON data
-      for (const link of download_links) {
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < dates.length; i += BATCH_SIZE) {
+    const batch = dates.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (day) => {
+        const daySheets = [];
+        const dayErrors = [];
         try {
-          const dlResp = await axios.get(link, { timeout: 60000, responseType: 'text' });
-          const rawText = typeof dlResp.data === 'string' ? dlResp.data : JSON.stringify(dlResp.data);
+          const apiResp = await axios.get(`${API_BASE}?day=${day}`, {
+            headers: {
+              Authorization: `token ${GITHUB_PAT}`,
+              Accept: 'application/json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+            timeout: 30000,
+          });
 
-          // The response can be NDJSON (one JSON object per line) or a single JSON object
-          const lines = rawText.trim().split('\n');
-          for (const line of lines) {
-            if (!line.trim()) continue;
+          const { download_links, report_day } = apiResp.data;
+          const reportDay = report_day || day;
+
+          if (!download_links || download_links.length === 0) {
+            dayErrors.push({ day, status: 'NO_LINKS', message: 'No download links returned.' });
+            return { sheets: daySheets, errors: dayErrors };
+          }
+
+          for (const link of download_links) {
             try {
-              const parsed = JSON.parse(line);
-              allSheets.push(extractSheets(parsed, reportDay));
-            } catch (parseErr) {
-              errors.push({ day, status: 'PARSE_ERROR', message: `Failed to parse line: ${parseErr.message}` });
+              const dlResp = await axios.get(link, { timeout: 60000, responseType: 'text' });
+              const rawText = typeof dlResp.data === 'string' ? dlResp.data : JSON.stringify(dlResp.data);
+              const lines = rawText.trim().split('\n');
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                  const parsed = JSON.parse(line);
+                  daySheets.push(extractSheets(parsed, reportDay));
+                } catch (parseErr) {
+                  dayErrors.push({ day, status: 'PARSE_ERROR', message: `Failed to parse line: ${parseErr.message}` });
+                }
+              }
+            } catch (dlErr) {
+              const status = dlErr.response?.status || 'NETWORK';
+              dayErrors.push({ day, status, message: `Download link error: ${dlErr.message}` });
             }
           }
-        } catch (dlErr) {
-          const status = dlErr.response?.status || 'NETWORK';
-          errors.push({ day, status, message: `Download link error: ${dlErr.message}` });
+        } catch (err) {
+          const status = err.response?.status || 'NETWORK';
+          const message = err.response?.data?.message || err.message;
+          dayErrors.push({ day, status, message });
         }
-      }
-    } catch (err) {
-      const status = err.response?.status || 'NETWORK';
-      const message = err.response?.data?.message || err.message;
-      errors.push({ day, status, message });
-    }
+        return { sheets: daySheets, errors: dayErrors };
+      })
+    );
 
-    // Rate-limit courtesy delay
-    if (dates.length > 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
+    for (const res of batchResults) {
+      if (res.sheets) allSheets.push(...res.sheets);
+      if (res.errors) errors.push(...res.errors);
     }
   }
 
@@ -298,6 +303,7 @@ app.get('/api/export', (req, res) => {
   res.send(csv);
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Copilot Metrics Dashboard running at http://localhost:${PORT}`);
 });
+server.setTimeout(300000); // 5 minutes timeout for large date ranges
